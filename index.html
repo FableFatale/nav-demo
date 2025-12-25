@@ -1,0 +1,1228 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>无人机协同调度仿真系统</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #1a1a1a; color: #eee; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        #container { display: flex; height: 100vh; }
+        
+        /* Sidebar */
+        #sidebar { width: 280px; background: #222; border-right: 1px solid #444; display: flex; flex-direction: column; padding: 10px; box-sizing: border-box; z-index: 10; }
+        #main { flex: 1; position: relative; }
+        
+        /* Mission Status Panel */
+        #missionPanel { background: #333; padding: 10px; border-radius: 4px; margin-bottom: 10px; }
+        .mission-node { padding: 8px; border-left: 3px solid #555; margin-bottom: 5px; background: #2a2a2a; transition: all 0.3s; opacity: 0.5; }
+        .mission-node.active { border-left-color: #00aaff; background: #334455; opacity: 1.0; transform: translateX(5px); }
+        .mission-node.completed { border-left-color: #2ecc71; opacity: 0.7; }
+        .mission-node.hidden { display: none; }
+        .mission-header { font-weight: bold; display: flex; align-items: center; gap: 8px; }
+        .mission-icon { width: 20px; text-align: center; }
+        .mission-condition { font-size: 0.85em; color: #aaa; margin-top: 4px; padding-left: 28px; }
+        .condition-item { display: flex; align-items: center; gap: 5px; margin-bottom: 2px; }
+        
+        /* Agent List */
+        #agentList { overflow-y: auto; flex: 1; margin-bottom: 10px; min-height: 150px; }
+        #targetList { overflow-y: auto; flex: 0 0 auto; max-height: 35vh; margin-bottom: 10px; }
+        .agent-item { background: #333; padding: 8px; margin-bottom: 5px; border-radius: 4px; cursor: pointer; border: 1px solid transparent; transition: all 0.2s; }
+        .agent-item:hover { background: #444; }
+        .agent-item.selected { border-color: #00aaff; background: #3a3a3a; }
+        .agent-header { display: flex; justify-content: space-between; align-items: center; }
+        .agent-name { font-weight: bold; }
+        .agent-role { font-size: 0.8em; background: #444; padding: 2px 6px; border-radius: 3px; }
+        .agent-status { font-size: 0.8em; color: #aaa; margin-top: 4px; display: flex; align-items: center; gap: 5px; }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #555; display: inline-block; }
+        .status-dot.active { background: #2ecc71; box-shadow: 0 0 5px #2ecc71; }
+        
+        .uav-icon { color: #00aaff; }
+        .ugv-icon { color: #ffaa00; }
+        .check-icon { color: #2ecc71; font-size: 0.9em; visibility: hidden; }
+        .check-icon.visible { visibility: visible; }
+
+        /* Log Panel */
+        #logPanel { margin-top: auto; height: 150px; overflow-y: auto; background: #000; border: 1px solid #333; border-radius: 4px; padding: 5px; font-family: 'Consolas', monospace; font-size: 0.8em; }
+        .log-entry { margin-bottom: 2px; color: #aaa; border-bottom: 1px solid #222; padding-bottom: 2px; }
+        .log-time { color: #555; margin-right: 5px; }
+        .log-event { color: #fff; }
+        .log-highlight { color: #00aaff; }
+
+        /* Overlays */
+        #info { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.7); padding: 10px; border-radius: 4px; pointer-events: none; }
+        #controls { position: absolute; bottom: 10px; left: 10px; background: rgba(0,0,0,0.8); padding: 10px; border-radius: 4px; display: flex; flex-direction: column; gap: 8px; width: 300px; }
+        #simStatus { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.7); padding: 10px; border-radius: 4px; text-align: right; }
+        
+        /* Focus Controls */
+        #focusControls { position: absolute; bottom: 10px; right: 10px; display: flex; gap: 5px; }
+        .focus-btn { background: rgba(0,0,0,0.6); border: 1px solid #444; color: #fff; padding: 8px 12px; border-radius: 4px; cursor: pointer; transition: all 0.2s; }
+        .focus-btn:hover { background: #00aaff; border-color: #00aaff; }
+
+        /* UI Components */
+        .badge { padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 0.9em; display: inline-block; }
+        button { cursor: pointer; padding: 6px 12px; background: #444; color: #fff; border: 1px solid #666; border-radius: 3px; transition: background 0.2s; }
+        button:hover { background: #555; }
+        button:active { background: #333; }
+        button:disabled { background: #222; color: #555; cursor: not-allowed; border-color: #333; }
+        input[type=number], select { background: #222; color: #fff; border: 1px solid #444; padding: 4px; border-radius: 3px; }
+        .row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+        hr { border: 0; border-top: 1px solid #444; width: 100%; margin: 8px 0; }
+        label { font-size: 0.9em; color: #ccc; }
+    </style>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+    <div id="container">
+        <!-- Left Sidebar -->
+        <div id="sidebar">
+            <div id="missionSummary" style="background: #2a2a2a; padding: 10px; border-radius: 5px; margin-bottom: 15px; border: 1px solid #444;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                    <span style="color: #aaa; font-size: 12px;">当前任务阶段</span>
+                    <span id="missionPhaseBadge" class="badge" style="background: #007bff;">READY</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; font-size: 12px; color: #eee;">
+                    <span>发现: <b id="statDetected" style="color:#ffd700">0</b></span>
+                    <span>确认: <b id="statConfirmed" style="color:#ff4444">0</b></span>
+                    <span>救援: <b id="statRescued" style="color:#2ecc71">0</b></span>
+                </div>
+            </div>
+
+            <h3 style="margin-top: 0; margin-bottom: 10px; color: #eee;">装备</h3>
+            <div id="agentList">
+                <!-- Agent items will be injected here -->
+            </div>
+
+
+            <div id="targetList"></div>
+
+
+
+            <style>
+                /* Add styles for collaborative tasks */
+                .collab-task {
+                    background: #333;
+                    border-left: 3px solid #555;
+                    padding: 8px;
+                    margin-bottom: 5px;
+                    border-radius: 4px;
+                    font-size: 13px;
+                    border: 1px solid transparent;
+                    transition: all 0.2s;
+                    cursor: pointer;
+                }
+                .collab-task:hover { background: #444; }
+                .collab-task.confirming { border-left-color: #ffd700; }
+                .collab-task.confirmed { border-left-color: #ff4444; }
+                .collab-task.rescuing { border-left-color: #ffaa00; }
+                .collab-task.completed { border-left-color: #2ecc71; opacity: 0.7; }
+                
+                .task-header { display: flex; justify-content: space-between; font-weight: bold; margin-bottom: 4px; }
+                .task-detail { color: #aaa; font-size: 12px; line-height: 1.4; }
+                .task-uavs { color: #00aaff; }
+            </style>
+
+            <div id="logPanel">
+                <div class="log-entry" style="color: #00aaff;">> 系统初始化完成</div>
+            </div>
+        </div>
+
+        <!-- Main 3D View -->
+        <div id="main">
+            <div id="info">
+                <h3 style="margin:0;">联合仿真</h3>
+                <div style="font-size: 0.8em; color: #aaa;">状态: <span id="simMode">连接中...</span></div>
+            </div>
+
+            <div id="simStatus">
+                <div id="simBadge" class="badge" style="background: #6c757d;">已暂停</div>
+                <div style="margin-top: 5px; font-size: 0.8em; color: #aaa;">Tick: <span id="lblTick">0</span></div>
+            </div>
+
+            <div id="controls">
+                <div class="row">
+                    <button id="btnRealtime" style="flex:1;">实时模式</button>
+                    <button id="btnRestart" style="flex:1; background: #d35400;">重新开始</button>
+                    <button id="btnLoadTimeline" style="flex:1;">加载回放</button>
+                </div>
+                <div class="row">
+                    <button id="btnPlay">播放</button>
+                    <button id="btnPause">暂停</button>
+                    <button id="btnStop">停止</button>
+                </div>
+                <div class="row">
+                    <label>倍速:</label>
+                    <select id="selSpeed" style="flex:1;">
+                        <option value="0.5">0.5x</option>
+                        <option value="1" selected>1.0x</option>
+                        <option value="2">2.0x</option>
+                        <option value="5">5.0x</option>
+                    </select>
+                </div>
+                <div class="row">
+                    <input type="range" id="scrub" min="0" max="100" value="0" style="width: 100%;">
+                </div>
+                <hr>
+                <div class="row">
+                    <label><input type="checkbox" id="chkShowRanges" checked> 显示雷达</label>
+                </div>
+                <input type="hidden" id="inputTicks" value="500">
+            </div>
+
+            <div id="focusControls">
+                <button class="focus-btn" onclick="focusCamera('UAV')">聚焦无人机</button>
+                <button class="focus-btn" onclick="focusCamera('UGV')">聚焦无人车</button>
+                <button class="focus-btn" onclick="focusCamera('TARGET')">聚焦目标</button>
+                <button class="focus-btn" onclick="focusCamera('BASE')">重置视角</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Global Error Handler ---
+        window.onerror = function(msg, url, line, col, error) {
+            const extra = !col ? '' : '\ncolumn: ' + col;
+            const err = "Error: " + msg + "\nurl: " + url + "\nline: " + line + extra;
+            console.error(err);
+            try {
+                const panel = document.getElementById('logPanel');
+                if (panel) {
+                    const entry = document.createElement('div');
+                    entry.className = 'log-entry';
+                    entry.style.color = '#ff4444';
+                    entry.innerText = "JS Error: " + msg;
+                    panel.appendChild(entry);
+                    panel.scrollTop = panel.scrollHeight;
+                }
+            } catch(e) {}
+            return false;
+        };
+
+        // --- 1. Initialization & Scene Setup ---
+        // Connect to Backend via Socket.IO
+        const socket = io();
+        let currentSimMode = 'PAUSED';
+        
+        // Three.js Scene Setup
+        // Scene: The container for all 3D objects
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x1a1a1a); 
+        scene.fog = new THREE.Fog(0x1a1a1a, 20, 500); // Fog for depth perception
+
+        // Camera: Perspective view
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const defaultCamPos = {x: 0, y: 160, z: 100};
+        camera.position.set(defaultCamPos.x, defaultCamPos.y, defaultCamPos.z); 
+        camera.lookAt(0, 0, 0);
+
+        // Renderer: Handles drawing to the canvas
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth - 280, window.innerHeight); // Subtract sidebar width
+        document.getElementById('main').appendChild(renderer.domElement);
+
+        // Raycaster for selection
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+
+        // Lights
+        const ambientLight = new THREE.AmbientLight(0x888888); 
+        scene.add(ambientLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+        dirLight.position.set(50, 100, 50);
+        scene.add(dirLight);
+
+        // Grid
+        const gridHelper = new THREE.GridHelper(200, 20, 0x444444, 0x222222);
+        scene.add(gridHelper);
+
+        // Groups
+        const effectsGroup = new THREE.Group();
+        scene.add(effectsGroup);
+        const labelsGroup = new THREE.Group();
+        scene.add(labelsGroup);
+
+        // --- Snow Effect ---
+        let snowSystem, snowGeo, snowMat;
+        const snowCount = 15000;
+        
+        function createSnow() {
+            snowGeo = new THREE.BufferGeometry();
+            const positions = [];
+            const velocities = [];
+            
+            for (let i = 0; i < snowCount; i++) {
+                // Random position
+                positions.push(
+                    Math.random() * 400 - 200, // x: -200 to 200
+                    Math.random() * 200,       // y: 0 to 200
+                    Math.random() * 400 - 200  // z: -200 to 200
+                );
+                // Random velocity
+                velocities.push(
+                    Math.random() * 0.2 - 0.1, // x drift
+                    Math.random() * 0.5 + 0.5, // y fall speed
+                    Math.random() * 0.2 - 0.1  // z drift
+                );
+            }
+            
+            snowGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            snowGeo.setAttribute('velocity', new THREE.Float32BufferAttribute(velocities, 3));
+            
+            // Create soft snowflake texture
+            const canvas = document.createElement('canvas');
+            canvas.width = 32;
+            canvas.height = 32;
+            const context = canvas.getContext('2d');
+            const gradient = context.createRadialGradient(16, 16, 0, 16, 16, 16);
+            gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
+            gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+            context.fillStyle = gradient;
+            context.fillRect(0, 0, 32, 32);
+            const snowTexture = new THREE.CanvasTexture(canvas);
+            
+            snowMat = new THREE.PointsMaterial({
+                color: 0xffffff,
+                size: 0.8,
+                map: snowTexture,
+                transparent: true,
+                opacity: 0.8,
+                depthWrite: false,
+                blending: THREE.AdditiveBlending
+            });
+            
+            snowSystem = new THREE.Points(snowGeo, snowMat);
+            scene.add(snowSystem);
+        }
+        createSnow();
+
+        // --- Helper: Create Text Label ---
+        function createTextLabel(text, pos, color="#ffffff", size=32) {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            ctx.font = `bold ${size}px "Microsoft YaHei", Arial`;
+            const metrics = ctx.measureText(text);
+            const width = metrics.width;
+            canvas.width = width + 20;
+            canvas.height = size + 20;
+            
+            ctx.font = `bold ${size}px "Microsoft YaHei", Arial`;
+            ctx.fillStyle = color;
+            ctx.fillText(text, 10, size);
+            
+            const tex = new THREE.CanvasTexture(canvas);
+            const mat = new THREE.SpriteMaterial({ map: tex });
+            const sprite = new THREE.Sprite(mat);
+            sprite.scale.set(canvas.width / 10, canvas.height / 10, 1);
+            sprite.position.set(pos.x, pos.y, pos.z);
+            return sprite;
+        }
+
+        // --- Location Markers (A, B, C) ---
+        function createLocationMarker(pos, color, label, subLabel) {
+            const group = new THREE.Group();
+            group.position.set(pos.x, pos.y, pos.z);
+            
+            // Base Ring - Optimized Size (Larger)
+            const ringGeo = new THREE.TorusGeometry(12, 0.8, 16, 100); // Increased radius to 12
+            ringGeo.rotateX(Math.PI / 2);
+            const ringMat = new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 0.6 });
+            group.add(new THREE.Mesh(ringGeo, ringMat));
+
+            // Label - Optimized Position and Size
+            const labelSprite = createTextLabel(label, {x: 0, y: 25, z: 0}, color, 64); 
+            group.add(labelSprite);
+            
+            if (subLabel) {
+                const subSprite = createTextLabel(subLabel, {x: 0, y: 15, z: 0}, "#aaaaaa", 32);
+                group.add(subSprite);
+            }
+
+            scene.add(group);
+        }
+
+        createLocationMarker({x: -50, y: 0, z: 50}, 0x00aaff, "A", "基站");
+        createLocationMarker({x: 0, y: 0, z: 0}, 0xffff00, "B", "搜索区");
+        createLocationMarker({x: 50, y: 0, z: -50}, 0xff0000, "C", "救援区");
+
+        // --- 2. State & Data ---
+        const agentsMap = new Map(); 
+        const targetsMap = new Map(); 
+        let selectedAgentId = null;
+        let timelineFrames = null;
+        let playbackIndex = 0;
+        let playbackPlaying = false;
+        let playbackTimer = null;
+        let playbackTicksPerSecond = 20; 
+        let ignoreLive = false;
+        let priorSimMode = null;
+        let missionPhase = "PATROL";
+
+        // --- 3. Socket Events ---
+        socket.on('connect', () => {
+            console.log('Connected');
+            document.getElementById('simMode').innerText = '已连接';
+            addLogEntry("已连接到仿真服务器");
+        });
+
+        socket.on('state', (state) => {
+            handleState(state);
+        });
+
+        socket.on('event', (evt) => {
+            if (evt && evt.msg) {
+                addLogEntry(evt.msg, true);
+            }
+        });
+
+        // --- 5. Sidebar Logic ---
+        function updateSidebar(agentsData) {
+            const list = document.getElementById('agentList');
+            if (!list) return;
+            list.innerHTML = ''; 
+            
+            if (!agentsData) return;
+
+            agentsData.forEach(d => {
+                const item = document.createElement('div');
+                item.className = 'agent-item';
+                if (selectedAgentId === d.id) item.classList.add('selected');
+                
+                const icon = d.type === 'UAV' ? '<span class="uav-icon">✈</span>' : '<span class="ugv-icon">🚙</span>';
+                const statusMap = {
+                    'IDLE': '待机',
+                    'TAKEOFF': '起飞中',
+                    'PATROL': '巡逻中',
+                    'REPORTING': '上报中',
+                    'RETURN': '返航中',
+                    'LANDING': '降落中',
+                    'STANDBY': '待命',
+                    'DISPATCH': '出动中',
+                    'RESCUING': '救援中',
+                    'RETURNING': '返回中'
+                };
+                const roleMap = {
+                    'LEADER': '长机',
+                    'FOLLOWER': '僚机'
+                };
+
+                const statusText = statusMap[d.state] || d.state;
+                const roleText = roleMap[d.role] || d.role;
+                const roleHtml = d.role ? `<span class="agent-role">${roleText}</span>` : '';
+                const isActive = d.state !== 'IDLE' && d.state !== 'STANDBY';
+                const statusDot = `<span class="status-dot ${isActive ? 'active' : ''}"></span>`;
+                
+                item.innerHTML = `
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <strong>${icon} ${d.id}</strong>
+                        ${roleHtml}
+                    </div>
+                    <div style="font-size:12px; color:#aaa; margin-top:4px;">
+                        ${statusDot} ${statusText}
+                    </div>
+                `;
+                item.onclick = () => {
+                    selectedAgentId = d.id;
+                    updateSidebar(agentsData); // re-render to update selection
+                    focusCamera(d.id);
+                };
+                list.appendChild(item);
+            });
+        }
+
+        function focusCamera(targetId) {
+            if (targetId === 'BASE') {
+                const duration = 1000;
+                const startPos = camera.position.clone();
+                const endPos = new THREE.Vector3(defaultCamPos.x, defaultCamPos.y, defaultCamPos.z);
+                const startTime = Date.now();
+
+                function animateReset() {
+                    const now = Date.now();
+                    const progress = Math.min((now - startTime) / duration, 1);
+                    const ease = 1 - Math.pow(1 - progress, 3); // Cubic ease out
+                    
+                    camera.position.lerpVectors(startPos, endPos, ease);
+                    camera.lookAt(0, 0, 0);
+                    
+                    if (progress < 1) {
+                        requestAnimationFrame(animateReset);
+                    }
+                }
+                animateReset();
+                selectedAgentId = null;
+                return;
+            }
+
+            // Focus on specific agent/target
+            let targetMesh = agentsMap.get(targetId) || targetsMap.get(targetId);
+            if (!targetMesh) {
+                // Try to find first of type if generic type passed
+                if (targetId === 'UAV' || targetId === 'UGV') {
+                    for (let [id, mesh] of agentsMap) {
+                        if (id.startsWith(targetId)) {
+                            targetMesh = mesh;
+                            break;
+                        }
+                    }
+                } else if (targetId === 'TARGET') {
+                    if (targetsMap.size > 0) targetMesh = targetsMap.values().next().value;
+                }
+            }
+
+            if (targetMesh) {
+                const offset = {x: 0, y: 30, z: 30};
+                const duration = 1000;
+                const startPos = camera.position.clone();
+                const endPos = targetMesh.position.clone().add(new THREE.Vector3(offset.x, offset.y, offset.z));
+                const startTime = Date.now();
+
+                function animateFocus() {
+                    const now = Date.now();
+                    const progress = Math.min((now - startTime) / duration, 1);
+                    const ease = 1 - Math.pow(1 - progress, 3);
+                    
+                    // Update target position in case it's moving
+                    const currentTargetPos = targetMesh.position.clone();
+                    camera.position.lerpVectors(startPos, endPos, ease);
+                    camera.lookAt(currentTargetPos);
+
+                    if (progress < 1) {
+                        requestAnimationFrame(animateFocus);
+                    }
+                }
+                animateFocus();
+            }
+        }
+
+        function updateTargetSidebar(targetsData, agents) {
+            const list = document.getElementById('targetList');
+            if (!list) return;
+            list.innerHTML = '';
+
+            if (!targetsData) return;
+
+            targetsData.forEach(t => {
+                const item = document.createElement('div');
+                let statusClass = '';
+                let statusText = '';
+                let detailText = '';
+
+                if (t.state === 'UNSEEN') {
+                     statusText = '未发现';
+                     detailText = '等待搜寻...';
+                     item.className = `collab-task`; 
+                     item.style.borderLeftColor = '#666'; 
+                } else if (t.state === 'DETECTED') {
+                    statusClass = 'confirming';
+                    statusText = '正在确认...';
+                    const uavs = t.detected_by || [];
+                    detailText = `参与 UAV: <span class="task-uavs">${uavs.join(', ')}</span><br>确认方式: 多机协同 (Multi-UAV)`;
+                    item.className = `collab-task ${statusClass}`;
+                } else if (t.state === 'CONFIRMED') {
+                    statusClass = 'confirmed';
+                    statusText = '系统已确认';
+                    detailText = `等待调度...`;
+                    if (agents) {
+                         const assignedUGV = agents.find(a => a.type === 'UGV' && (a.state === 'DISPATCH' || a.state === 'RESCUING') && a.target_human_id === t.id); 
+                         if (assignedUGV) {
+                             statusClass = 'rescuing';
+                             statusText = '救援中';
+                             detailText = `执行: ${assignedUGV.id}`;
+                         }
+                    }
+                    item.className = `collab-task ${statusClass}`;
+                } else if (t.state === 'RESCUED') {
+                    statusClass = 'completed';
+                    statusText = '已完成';
+                    detailText = '目标已获救';
+                    item.className = `collab-task ${statusClass}`;
+                }
+
+                item.innerHTML = `
+                    <div class="task-header">
+                        <span>目标 · ${t.id}</span>
+                        <span>${statusText}</span>
+                    </div>
+                    <div class="task-detail">${detailText}</div>
+                `;
+                item.onclick = () => {
+                    focusCamera(t.id);
+                };
+                list.appendChild(item);
+            });
+        }
+
+        // Removed updateCollaborativeTasks
+
+        function handleState(state) {
+            if (!state) return;
+
+            // Update UI Sidebars
+            updateSidebar(state.agents);
+            updateTargetSidebar(state.targets, state.agents);
+            updateConnectionLines(state.targets, state.agents);
+
+            // Update Mission Phase
+            if (state.mission_phase) {
+                missionPhase = state.mission_phase;
+                updateMissionStatus(missionPhase, state);
+            }
+
+            // Update Sim Mode (Sync with backend)
+            if (state.sim_mode) {
+                currentSimMode = state.sim_mode;
+                updateSimBadge(currentSimMode);
+            }
+
+            // Update Tick Counter
+            if (state.tick !== undefined) {
+                const elTick = document.getElementById('lblTick');
+                if (elTick) elTick.innerText = state.tick;
+            }
+
+            if (state.agents) {
+                state.agents.forEach(agentData => {
+                    let mesh = agentsMap.get(agentData.id);
+                    if (!mesh) {
+                        mesh = createAgentMesh(agentData.type);
+                        scene.add(mesh);
+                        agentsMap.set(agentData.id, mesh);
+                        
+                        // Add trail
+                        const trailGeo = new THREE.BufferGeometry();
+                        const maxPoints = 300; // Increased for smooth spline
+                        const positions = new Float32Array(maxPoints * 3);
+                        const colors = new Float32Array(maxPoints * 3); // For gradient
+                        trailGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                        trailGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+                        trailGeo.setDrawRange(0, 0);
+                        
+                        const trailMat = new THREE.LineBasicMaterial({ 
+                            vertexColors: true, // Enable gradient
+                            transparent: true,
+                            opacity: 0.8 // Base opacity (vertex colors will handle fade)
+                        });
+                        if (agentData.type === 'UAV') trailMat.dashSize = 1; 
+                        const trail = new THREE.Line(trailGeo, trailMat);
+                        scene.add(trail);
+                        mesh.userData.trail = trail;
+                        mesh.userData.trailPoints = [];
+                    }
+                    
+                    // Update Position
+                    mesh.position.set(agentData.x, agentData.y, agentData.z);
+                    
+                    // Rotate based on movement (simple lookAt)
+                    if (mesh.userData.lastPos) {
+                        const dx = agentData.x - mesh.userData.lastPos.x;
+                        const dz = agentData.z - mesh.userData.lastPos.z;
+                        if (Math.abs(dx) > 0.01 || Math.abs(dz) > 0.01) {
+                            const angle = Math.atan2(dx, dz);
+                            mesh.rotation.y = angle;
+                        }
+                    }
+                    mesh.userData.lastPos = {x: agentData.x, y: agentData.y, z: agentData.z};
+
+                    // Update Trail with Spline Smoothing & Gradient
+                    const trailPoints = mesh.userData.trailPoints;
+                    trailPoints.push(new THREE.Vector3(agentData.x, agentData.y, agentData.z));
+                    if (trailPoints.length > 20) trailPoints.shift(); // Keep raw points low
+                    
+                    if (trailPoints.length > 2) {
+                        const curve = new THREE.CatmullRomCurve3(trailPoints);
+                        const smoothPoints = curve.getPoints(200); // Generate smooth path
+                        
+                        const positions = mesh.userData.trail.geometry.attributes.position.array;
+                        const colors = mesh.userData.trail.geometry.attributes.color.array;
+                        const baseColor = new THREE.Color(agentData.type === 'UAV' ? 0x00aaff : 0xffaa00);
+                        
+                        for (let i = 0; i < smoothPoints.length; i++) {
+                            // Position
+                            positions[i * 3] = smoothPoints[i].x;
+                            positions[i * 3 + 1] = smoothPoints[i].y;
+                            positions[i * 3 + 2] = smoothPoints[i].z;
+                            
+                            // Gradient Color (Fade to tail)
+                            const alpha = i / smoothPoints.length; // 0 (tail) -> 1 (head)
+                            colors[i * 3] = baseColor.r * alpha;
+                            colors[i * 3 + 1] = baseColor.g * alpha;
+                            colors[i * 3 + 2] = baseColor.b * alpha;
+                        }
+                        mesh.userData.trail.geometry.setDrawRange(0, smoothPoints.length);
+                        mesh.userData.trail.geometry.attributes.position.needsUpdate = true;
+                        mesh.userData.trail.geometry.attributes.color.needsUpdate = true;
+                    }
+                });
+            }
+
+            // Update Targets
+            if (state.targets) {
+                state.targets.forEach(t => {
+                    let mesh = targetsMap.get(t.id);
+                    if (!mesh) {
+                        mesh = createTargetMesh(t.id);
+                        scene.add(mesh);
+                        targetsMap.set(t.id, mesh);
+                    }
+
+                    // Update Position
+                    mesh.position.set(t.x, t.y, t.z);
+
+                    // Update Visibility & Color based on state
+                    const bodyMat = mesh.userData.bodyMat;
+                    const headMat = mesh.userData.headMat;
+                    const pulseRing = mesh.userData.pulseRing;
+                    const confirmLabel = mesh.userData.confirmLabel;
+
+                    if (t.state === 'UNSEEN') {
+                        // Ghost mode
+                        bodyMat.color.setHex(0xaaaaaa);
+                        bodyMat.transparent = true;
+                        bodyMat.opacity = 0.6;
+                        headMat.color.setHex(0xaaaaaa);
+                        headMat.transparent = true;
+                        headMat.opacity = 0.6;
+                        mesh.visible = true;
+                        pulseRing.visible = false;
+                        confirmLabel.visible = false;
+                    } else if (t.state === 'DETECTED') {
+                        bodyMat.color.setHex(0xffff00);
+                        bodyMat.transparent = true;
+                        bodyMat.opacity = 0.8;
+                        headMat.color.setHex(0xffff00);
+                        headMat.transparent = true;
+                        headMat.opacity = 0.8;
+                        mesh.visible = true;
+                        pulseRing.visible = true; // Show Pulse
+                        confirmLabel.visible = false;
+                    } else if (t.state === 'CONFIRMED') {
+                        bodyMat.color.setHex(0xff0000);
+                        bodyMat.transparent = false;
+                        bodyMat.opacity = 1.0;
+                        headMat.color.setHex(0xff0000);
+                        headMat.transparent = false;
+                        headMat.opacity = 1.0;
+                        mesh.visible = true;
+                        pulseRing.visible = false;
+                        confirmLabel.visible = true; // Show Label
+                    } else if (t.state === 'RESCUED') {
+                        mesh.visible = false;
+                    }
+                });
+            }
+        }
+
+        function updateMissionStatus(phase, state) {
+            // Update Phase Badge
+            const badge = document.getElementById('missionPhaseBadge');
+            if (badge) {
+                const phaseMap = {
+                    'READY': '准备中',
+                    'PATROL': '正在搜救',
+                    'RESCUE': '正在救援',
+                    'COMPLETE': '任务结束'
+                };
+                badge.innerText = phaseMap[phase] || phase;
+                // Color coding
+                if (phase === 'READY') badge.style.background = '#6c757d';
+                else if (phase === 'PATROL') badge.style.background = '#007bff';
+                else if (phase === 'RESCUE') badge.style.background = '#ffc107'; // Orange/Yellow
+                else if (phase === 'COMPLETE') badge.style.background = '#2ecc71';
+            }
+
+            // Update Stats
+            if (state && state.targets) {
+                const detected = state.targets.filter(t => t.state === 'DETECTED').length;
+                const confirmed = state.targets.filter(t => t.state === 'CONFIRMED').length;
+                const rescued = state.targets.filter(t => t.state === 'RESCUED').length;
+
+                const elDetected = document.getElementById('statDetected');
+                const elConfirmed = document.getElementById('statConfirmed');
+                const elRescued = document.getElementById('statRescued');
+
+                if (elDetected) elDetected.innerText = detected;
+                if (elConfirmed) elConfirmed.innerText = confirmed;
+                if (elRescued) elRescued.innerText = rescued;
+            }
+        }
+
+        function addLogEntry(msg, highlight=false) {
+            const panel = document.getElementById('logPanel');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            const time = new Date().toLocaleTimeString().split(' ')[0];
+            entry.innerHTML = `<span class="log-time">[${time}]</span> <span class="log-event ${highlight ? 'log-highlight' : ''}">${msg}</span>`;
+            panel.appendChild(entry);
+            panel.scrollTop = panel.scrollHeight;
+        }
+
+        // --- Playback Logic ---
+        function startPlayback() {
+            const ticks = parseInt(document.getElementById('inputTicks').value) || 500;
+            const uavCount = 3;
+            const ugvCount = 2;
+            
+            // Show loading
+            const btn = document.getElementById('btnLoadTimeline');
+            const originalText = btn.innerText;
+            btn.innerText = "加载中...";
+            btn.disabled = true;
+
+            // Clear Log Panel to prevent performance issues during playback
+            document.getElementById('logPanel').innerHTML = '';
+            addLogEntry("正在加载回放数据...", true);
+
+            fetch(`/export_timeline?uav=${uavCount}&ugv=${ugvCount}&max_ticks=${ticks}`)
+                .then(res => res.json())
+                .then(data => {
+                    timelineFrames = data;
+                    playbackIndex = 0;
+                    ignoreLive = true;
+                    // FIX: Use variable, not UI text
+                    priorSimMode = currentSimMode; 
+                    socket.emit('set_sim_mode', 'PAUSED');
+                    updateSimBadge('PLAYBACK');
+                    document.getElementById('scrub').max = timelineFrames.length - 1;
+                    document.getElementById('scrub').value = 0;
+                    
+                    // Reset UI
+                    btn.innerText = originalText;
+                    btn.disabled = false;
+                    addLogEntry(`回放已加载: ${data.length} 帧`, true);
+                    
+                    applyFrame(timelineFrames[0]);
+                })
+                .catch(err => {
+                    console.error(err);
+                    btn.innerText = originalText;
+                    btn.disabled = false;
+                    addLogEntry("加载回放失败", true);
+                });
+        }
+
+        function schedulePlaybackTick() {
+            if (!playbackPlaying) return;
+            const speed = parseFloat(document.getElementById('selSpeed').value);
+            const interval = 1000 / (playbackTicksPerSecond * speed);
+            
+            playbackTimer = setTimeout(() => {
+                if (!playbackPlaying) return;
+                playbackIndex++;
+                if (playbackIndex >= timelineFrames.length) {
+                    stopPlayback();
+                    return;
+                }
+                applyFrame(timelineFrames[playbackIndex]);
+                updateScrubUI();
+                schedulePlaybackTick();
+            }, interval);
+        }
+
+        function applyFrame(frame) {
+             if (!frame) return;
+            
+            // Handle Events Replay
+            if (frame.events && Array.isArray(frame.events)) {
+                frame.events.forEach(evt => {
+                    addLogEntry(evt.msg, true);
+                });
+            }
+
+            if (frame.agents) {
+                handleState(frame, true);
+                return;
+            }
+             if (frame.state) {
+                handleState(frame.state, true);
+            } else {
+                handleState({
+                    tick: frame.tick !== undefined ? frame.tick : playbackIndex,
+                    agents: frame.states || frame.agent_states || [],
+                    targets: frame.targets || [], // Ensure targets is present
+                    mission_phase: frame.mission_phase || 'UNKNOWN'
+                }, true);
+            }
+        }
+
+        function stopPlayback() {
+            playbackPlaying = false;
+            clearTimeout(playbackTimer);
+            playbackIndex = 0;
+            ignoreLive = false;
+            try { if (priorSimMode) socket.emit('set_sim_mode', priorSimMode); else socket.emit('set_sim_mode', 'RUNNING'); } catch(e){}
+            priorSimMode = null;
+            timelineFrames = null;
+            updateSimBadge(currentSimMode);
+            document.getElementById('scrub').value = 0;
+        }
+
+        function updateScrubUI() {
+            document.getElementById('scrub').value = playbackIndex;
+            document.getElementById('lblTick').innerText = playbackIndex;
+        }
+
+        function updateSimBadge(mode) {
+            const badge = document.getElementById('simBadge');
+            const simModeText = document.getElementById('simMode');
+            if (!badge) return;
+            let m = (mode || 'PAUSED').toString().toUpperCase();
+            if (playbackPlaying) m = 'PLAYBACK';
+            
+            // Map to Chinese
+            const modeMap = {
+                'RUNNING': '运行中',
+                'PAUSED': '已暂停',
+                'PLAYBACK': '回放中',
+                'COMPLETE': '已结束'
+            };
+            
+            simModeText && (simModeText.innerText = modeMap[m] || m);
+            badge.innerText = modeMap[m] || m;
+            
+            if (m === 'RUNNING') { badge.style.background = '#2ecc71'; badge.style.color = '#002b10'; }
+            else if (m === 'PAUSED') { badge.style.background = '#6c757d'; badge.style.color = '#fff'; }
+            else if (m === 'PLAYBACK') { badge.style.background = '#3498db'; badge.style.color = '#fff'; }
+            else if (m === 'COMPLETE') { badge.style.background = '#9b59b6'; badge.style.color = '#fff'; }
+            else { badge.style.background = '#ff9800'; badge.style.color = '#2b1700'; }
+
+            // Update Control Buttons State
+            const isRunning = m === 'RUNNING';
+            document.getElementById('btnPlay').disabled = isRunning;
+            document.getElementById('btnPause').disabled = isRunning;
+            document.getElementById('btnStop').disabled = isRunning;
+
+            // Hide badge if COMPLETE as per user request - REMOVED to show status
+            // if (m === 'COMPLETE' || m === '已结束') {
+            //    badge.style.display = 'none';
+            // } else {
+                badge.style.display = 'inline-block';
+            // }
+        }
+
+        // --- Event Listeners ---
+        document.getElementById('btnRealtime').onclick = () => {
+            console.log('Clicked Realtime Mode');
+            if (!socket.connected) {
+                alert("错误: 未连接到服务器！请检查后端是否运行，并确保通过 http://localhost:5002 访问。");
+                addLogEntry("错误: 未连接到服务器", true);
+                return;
+            }
+            addLogEntry("点击: 实时模式", false);
+            if (missionPhase === 'COMPLETE') {
+                console.log('Resetting simulation before start...');
+                socket.emit('reset_simulation');
+                // Wait for reset to process
+                setTimeout(() => {
+                    console.log('Emitting set_sim_mode RUNNING after reset');
+                    socket.emit('set_sim_mode', 'RUNNING'); 
+                }, 500);
+            } else {
+                console.log('Emitting set_sim_mode RUNNING');
+                socket.emit('set_sim_mode', 'RUNNING'); 
+            }
+            currentSimMode = 'RUNNING';
+            updateSimBadge('RUNNING');
+        };
+        
+        document.getElementById('btnRestart').onclick = () => {
+            console.log('Clicked Restart');
+            addLogEntry("点击: 重新开始", false);
+            socket.emit('reset_simulation');
+        };
+
+        document.getElementById('btnLoadTimeline').onclick = startPlayback;
+        
+        document.getElementById('btnPlay').onclick = () => {
+            if (!timelineFrames) return;
+            playbackPlaying = true;
+            schedulePlaybackTick();
+            updateSimBadge('PLAYBACK');
+        };
+        
+        document.getElementById('btnPause').onclick = () => {
+            playbackPlaying = false;
+            clearTimeout(playbackTimer);
+            updateSimBadge('PLAYBACK');
+        };
+        
+        document.getElementById('btnStop').onclick = stopPlayback;
+        
+        document.getElementById('scrub').oninput = (e) => {
+            if (!timelineFrames) return;
+            playbackIndex = parseInt(e.target.value);
+            applyFrame(timelineFrames[playbackIndex]);
+            document.getElementById('lblTick').innerText = playbackIndex;
+        };
+
+        document.getElementById('chkShowRanges').onchange = () => {
+            const show = document.getElementById('chkShowRanges').checked;
+            agentsMap.forEach(v => { 
+                // Find radar ring in children
+                v.children.forEach(child => {
+                    if (child.geometry && child.geometry.type === 'RingGeometry') {
+                        child.visible = show;
+                    }
+                });
+            });
+        };
+        
+        // Connection Lines Group
+        const linesGroup = new THREE.Group();
+        scene.add(linesGroup);
+
+        function updateConnectionLines(targets, agents) {
+            linesGroup.clear();
+            if (!targets) return;
+
+            targets.forEach(t => {
+                if (t.state === 'DETECTED' && t.detected_by) {
+                    const targetMesh = targetsMap.get(t.id);
+                    if (!targetMesh) return;
+
+                    t.detected_by.forEach(uavId => {
+                        const uavMesh = agentsMap.get(uavId);
+                        if (uavMesh) {
+                            const points = [];
+                            points.push(uavMesh.position.clone());
+                            points.push(targetMesh.position.clone());
+
+                            const geometry = new THREE.BufferGeometry().setFromPoints(points);
+                            const material = new THREE.LineDashedMaterial({
+                                color: 0xffff00, // Pale yellow
+                                dashSize: 1,
+                                gapSize: 0.5,
+                                opacity: 0.6,
+                                transparent: true
+                            });
+
+                            const line = new THREE.Line(geometry, material);
+                            line.computeLineDistances(); // Required for dashed lines
+                            linesGroup.add(line);
+                        }
+                    });
+                }
+            });
+        }
+
+        // Animation Loop
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            // Animate UAV trails
+            agentsMap.forEach(agent => {
+                if (agent.userData.trail && agent.userData.trail.material.type === 'LineDashedMaterial') {
+                    agent.userData.trail.material.dashOffset -= 0.1; 
+                }
+            });
+
+            // Animate Target Pulse
+            const now = Date.now();
+            targetsMap.forEach(mesh => {
+                const pulseRing = mesh.userData.pulseRing;
+                if (pulseRing && pulseRing.visible) {
+                    // Pulse effect: Scale 1 -> 3, Opacity 0.8 -> 0
+                    const speed = 0.002;
+                    const scale = 1 + (now * speed) % 2; 
+                    pulseRing.scale.set(scale, scale, scale);
+                    pulseRing.material.opacity = 0.8 * (1 - (scale - 1) / 2);
+                }
+            });
+
+            renderer.render(scene, camera);
+        }
+        
+        animate();
+
+        window.onresize = () => {
+            camera.aspect = (window.innerWidth - 280) / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth - 280, window.innerHeight);
+        };
+
+        // --- Helper: Create Agent Mesh ---
+        function createAgentMesh(type) {
+            const group = new THREE.Group();
+            
+            if (type === 'UAV') {
+                // Quadcopter Model (Enhanced)
+                // Central Body
+                const bodyGeo = new THREE.BoxGeometry(1.2, 0.4, 1.2);
+                const bodyMat = new THREE.MeshPhongMaterial({ color: 0x00aaff, shininess: 100 });
+                const body = new THREE.Mesh(bodyGeo, bodyMat);
+                group.add(body);
+
+                // Arms (X shape)
+                const armGeo = new THREE.BoxGeometry(4.5, 0.1, 0.3);
+                const armMat = new THREE.MeshLambertMaterial({ color: 0x333333 });
+                
+                const arm1 = new THREE.Mesh(armGeo, armMat);
+                arm1.rotation.y = Math.PI / 4;
+                group.add(arm1);
+
+                const arm2 = new THREE.Mesh(armGeo, armMat);
+                arm2.rotation.y = -Math.PI / 4;
+                group.add(arm2);
+
+                // Rotors & Motors
+                const motorGeo = new THREE.CylinderGeometry(0.2, 0.2, 0.3, 8);
+                const motorMat = new THREE.MeshLambertMaterial({ color: 0x555555 });
+                const rotorGeo = new THREE.BoxGeometry(1.8, 0.05, 0.15);
+                const rotorMat = new THREE.MeshBasicMaterial({ color: 0xccffff });
+
+                const positions = [
+                    {x: 1.5, z: 1.5}, {x: -1.5, z: -1.5},
+                    {x: 1.5, z: -1.5}, {x: -1.5, z: 1.5}
+                ];
+
+                group.userData.rotors = [];
+
+                positions.forEach(pos => {
+                    // Motor
+                    const motor = new THREE.Mesh(motorGeo, motorMat);
+                    motor.position.set(pos.x, 0.2, pos.z);
+                    group.add(motor);
+
+                    // Rotor Blade
+                    const rotor = new THREE.Mesh(rotorGeo, rotorMat);
+                    rotor.position.set(pos.x, 0.4, pos.z);
+                    group.add(rotor);
+                    group.userData.rotors.push(rotor);
+                });
+
+                // Camera/Sensor Gimbal (Bottom)
+                const gimbalGeo = new THREE.SphereGeometry(0.3, 16, 16);
+                const gimbalMat = new THREE.MeshPhongMaterial({ color: 0x111111 });
+                const gimbal = new THREE.Mesh(gimbalGeo, gimbalMat);
+                gimbal.position.y = -0.4;
+                group.add(gimbal);
+
+                // Radar Range (Visual)
+                const rangeGeo = new THREE.RingGeometry(14.8, 15, 64);
+                rangeGeo.rotateX(-Math.PI / 2);
+                const rangeMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.15, side: THREE.DoubleSide });
+                const rangeRing = new THREE.Mesh(rangeGeo, rangeMat);
+                rangeRing.position.y = -10; // Dynamic update needed if height changes, but fixed offset is okay for now
+                group.add(rangeRing);
+
+            } else {
+                // UGV Model (Rescue Rover)
+                // Main Chassis
+                const chassisGeo = new THREE.BoxGeometry(2.2, 0.8, 3.5);
+                const chassisMat = new THREE.MeshPhongMaterial({ color: 0xffaa00, shininess: 50 });
+                const chassis = new THREE.Mesh(chassisGeo, chassisMat);
+                chassis.position.y = 0.8;
+                group.add(chassis);
+
+                // Cargo Bed (Rear)
+                const bedGeo = new THREE.BoxGeometry(2.0, 0.4, 1.5);
+                const bedMat = new THREE.MeshLambertMaterial({ color: 0x333333 });
+                const bed = new THREE.Mesh(bedGeo, bedMat);
+                bed.position.set(0, 1.0, 0.8);
+                group.add(bed);
+
+                // Sensor Mast (Front)
+                const mastGeo = new THREE.CylinderGeometry(0.1, 0.1, 1.0);
+                const mastMat = new THREE.MeshLambertMaterial({ color: 0x888888 });
+                const mast = new THREE.Mesh(mastGeo, mastMat);
+                mast.position.set(0, 1.5, -1.2);
+                group.add(mast);
+
+                const sensorHeadGeo = new THREE.BoxGeometry(0.4, 0.2, 0.2);
+                const sensorHeadMat = new THREE.MeshBasicMaterial({ color: 0x00ffff });
+                const sensorHead = new THREE.Mesh(sensorHeadGeo, sensorHeadMat);
+                sensorHead.position.set(0, 2.0, -1.2);
+                group.add(sensorHead);
+
+                // Wheels (6-wheel design)
+                const wheelGeo = new THREE.CylinderGeometry(0.5, 0.5, 0.4, 16);
+                const wheelMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
+                wheelGeo.rotateZ(Math.PI / 2);
+
+                const wheelZ = [-1.2, 0, 1.2];
+                const wheelX = 1.3;
+
+                wheelZ.forEach(z => {
+                    // Right
+                    const wR = new THREE.Mesh(wheelGeo, wheelMat);
+                    wR.position.set(wheelX, 0.5, z);
+                    group.add(wR);
+                    // Left
+                    const wL = new THREE.Mesh(wheelGeo, wheelMat);
+                    wL.position.set(-wheelX, 0.5, z);
+                    group.add(wL);
+                });
+            }
+            
+            // Label
+            const label = createTextLabel(type, {x: 0, y: 3, z: 0}, "#ffffff", 20);
+            group.add(label);
+
+            return group;
+        }
+
+        function createTargetMesh(id) {
+            const group = new THREE.Group();
+
+            // Human Model (Low Poly)
+            const mat = new THREE.MeshLambertMaterial({ color: 0xaaaaaa }); // Default
+
+            // Torso
+            const torsoGeo = new THREE.BoxGeometry(0.6, 0.9, 0.3);
+            const torso = new THREE.Mesh(torsoGeo, mat);
+            torso.position.y = 0.95;
+            group.add(torso);
+
+            // Head
+            const headGeo = new THREE.BoxGeometry(0.4, 0.4, 0.4);
+            const head = new THREE.Mesh(headGeo, mat);
+            head.position.y = 1.6;
+            group.add(head);
+
+            // Arms
+            const armGeo = new THREE.BoxGeometry(0.2, 0.8, 0.2);
+            const armL = new THREE.Mesh(armGeo, mat);
+            armL.position.set(-0.5, 0.9, 0);
+            group.add(armL);
+            
+            const armR = new THREE.Mesh(armGeo, mat);
+            armR.position.set(0.5, 0.9, 0);
+            group.add(armR);
+
+            // Legs
+            const legGeo = new THREE.BoxGeometry(0.25, 0.9, 0.25);
+            const legL = new THREE.Mesh(legGeo, mat);
+            legL.position.set(-0.2, 0.45, 0);
+            group.add(legL);
+
+            const legR = new THREE.Mesh(legGeo, mat);
+            legR.position.set(0.2, 0.45, 0);
+            group.add(legR);
+
+            // Label
+            const label = createTextLabel(id, {x: 0, y: 2.2, z: 0}, "#ffffff", 20);
+            group.add(label);
+            
+            // Pulse Ring (for DETECTED state)
+            const pulseGeo = new THREE.RingGeometry(0.5, 0.6, 32);
+            pulseGeo.rotateX(-Math.PI / 2);
+            const pulseMat = new THREE.MeshBasicMaterial({ color: 0xffff00, transparent: true, opacity: 0.0, side: THREE.DoubleSide });
+            const pulseRing = new THREE.Mesh(pulseGeo, pulseMat);
+            pulseRing.visible = false;
+            group.add(pulseRing);
+
+            // System Confirmed Label (for CONFIRMED state)
+            const confirmLabel = createTextLabel("系统确认", {x: 0, y: 4.0, z: 0}, "#ff0000", 24);
+            confirmLabel.visible = false;
+            group.add(confirmLabel);
+
+            // Store refs for color updates - traverse to update all children materials
+            group.userData = { 
+                bodyMat: mat, // Simplified ref for main color
+                headMat: mat,
+                pulseRing: pulseRing,
+                confirmLabel: confirmLabel
+            }; 
+            return group;
+        }
+    </script>
+</body>
+</html>

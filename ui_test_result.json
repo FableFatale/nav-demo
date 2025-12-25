@@ -1,0 +1,51 @@
+{
+  "ok": true,
+  "steps": [
+    {
+      "step": "initial",
+      "text": "RUNNING",
+      "color": "rgb(46, 204, 113)"
+    },
+    {
+      "step": "clicked_realtime"
+    },
+    {
+      "step": "after_click",
+      "text": "RUNNING",
+      "color": "rgb(46, 204, 113)"
+    },
+    {
+      "step": "agent_present",
+      "value": true
+    },
+    {
+      "step": "emitted_detection",
+      "payload": {
+        "agent_id": "uav_1",
+        "agent_type": "UAV",
+        "tick": 1765960078,
+        "x": 50.5,
+        "y": 20,
+        "z": -50.5,
+        "target_id": "C",
+        "distance": 1.0
+      }
+    },
+    {
+      "step": "invoked_drawGuidelineForDetection",
+      "value": true
+    },
+    {
+      "step": "guideline_found",
+      "value": true
+    },
+    {
+      "step": "clicked_load_timeline"
+    },
+    {
+      "step": "playback_progress",
+      "value": true
+    }
+  ],
+  "screenshot": "ui_test.png"
+}

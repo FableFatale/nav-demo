@@ -1,0 +1,38 @@
+sequenceDiagram
+  participant UI as Browser UI (index.html)
+  participant Socket as Socket.IO Client
+  participant Server as Flask SocketIO Handler (app.py)
+  participant DET as Detections Store (in-memory + detections.json)
+  participant Sim as Background Simulator Thread
+
+  UI->>Socket: detect target in sector (emit 'detection' {agent_id,pos,tick,distance})
+  Socket->>Server: 'detection' event
+  Server->>DET: append entry {state: TARGET_DETECTED, detect_ticks:0, assigned_ugv:None}
+  Server-->>Socket: emit 'target_found' (broadcast)
+
+  Note over Sim,DET: On subsequent sim ticks:
+  Sim->>DET: read DETECTIONS (locked)
+  alt detection not assigned_ugv
+    Sim->>Sim: find nearest UGV (agents_map), set det.assigned_ugv
+    Sim->>DET: set det.ugv_start_pos, det.converge_started = True
+  end
+
+  loop each tick while not det.confirmed
+    Sim->>DET: det.detect_ticks += 1
+    Sim->>DET: if assigned -> det.converge_ticks +=1
+    Sim->>Sim: t = converge_ticks / CONVERGE_DURATION (clamped to 1.0)
+    Sim-->>Server: modify agents_map[assigned_ugv].x,y,z = lerp(start, det.pos, t)
+    alt t >= 1.0
+      Sim->>DET: det.confirm_ticks += 1
+      Sim-->>Server: set agents_map[ugv].state = 'CONFIRM'
+      alt det.confirm_ticks >= CONFIRM_DURATION
+        Sim->>DET: det.confirmed = true
+        Sim-->>Socket: emit 'target_confirmed' (broadcast)
+      end
+    end
+    Sim->>DET: persist_detections()
+    Sim->>Server: compose state frame and emit 'state'
+  end
+
+  Server-->>Socket: 'state' frames (includes updated agent positions / det state)
+  Socket-->>UI: 'target_confirmed' and 'state' -> UI updates visuals (guidelines, color)

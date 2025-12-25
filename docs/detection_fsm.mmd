@@ -1,0 +1,28 @@
+stateDiagram-v2
+  direction LR
+  [*] --> TARGET_DETECTED
+
+  TARGET_DETECTED : created by `handle_detection` in `app.py`
+  TARGET_DETECTED --> ASSIGNED_UGV : assign nearest UGV
+  ASSIGNED_UGV --> CONVERGE : converge_ticks starts (CONVERGE_DURATION)
+  CONVERGE : UGV position interpolates toward det.pos
+  CONVERGE --> CONFIRM : when t >= 1.0 (converge finished)
+  CONFIRM : confirm_ticks increments (CONFIRM_DURATION)
+  CONFIRM --> CONFIRMED : when confirm_ticks >= CONFIRM_DURATION
+  CONFIRMED : det.confirmed = true; emit `target_confirmed`
+  CONFIRMED --> [*]
+
+  %% timeouts / persistence
+  note right of TARGET_DETECTED
+    - detect_ticks increments each sim tick
+    - metadata: assigned_ugv, converge_ticks, confirm_ticks
+    - persisted to `detections.json`
+  end note
+
+  note left of CONVERGE
+    CONVERGE_DURATION = 60 ticks (default)
+  end note
+
+  note left of CONFIRM
+    CONFIRM_DURATION = 20 ticks (default)
+  end note
